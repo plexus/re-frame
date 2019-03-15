@@ -1,4 +1,4 @@
-## A local state port of re-frame 10.2
+## A local state port of re-frame 10.6
 
 I wanted to use devcards with re-frame. It could be useful for other people too.
 
