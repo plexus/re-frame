@@ -34,7 +34,7 @@
                                       :macosx  "open"
                                       :linux   "xdg-open"}}}
 
-  :deploy-repositories [["clojars" {:sign-releases false
+  :deploy-repositories [["clojars" {:sign-releases true
                                     :url "https://clojars.org/repo"
                                     :username :env/CLOJARS_USERNAME
                                     :password :env/CLOJARS_PASSWORD}]]
