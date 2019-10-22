@@ -11,7 +11,9 @@
                  [thheller/shadow-cljs      "2.8.81"   :scope "provided"]
                  [reagent                   "0.9.0-rc3"]
                  [net.cgrand/macrovich      "0.2.1"]
-                 [org.clojure/tools.logging "0.4.1"]]
+                 [org.clojure/tools.logging "0.4.1"]
+                 [com.nedap.staffing-solutions/speced.def "1.1.0"]
+                 [com.nedap.staffing-solutions/utils.spec.predicates "1.1.0"]]
 
   :plugins      [[day8/lein-git-inject "0.0.4"]
                  [lein-shadow          "0.1.7"]]
@@ -45,7 +47,7 @@
 
                 :builds {:browser-test
                          {:target           :browser-test
-                          :ns-regexp        "re-frame\\..*-test$"
+                          :ns-regexp        "re-frame(-lib)?\\..*-test$"
                           :test-dir         "run/compiled/browser/test"
                           :compiler-options {:pretty-print                       true
                                              :external-config                    {:devtools/config {:features-to-install [:formatters :hints]}}}
@@ -55,7 +57,7 @@
 
                          :karma-test
                          {:target           :karma
-                          :ns-regexp        "re-frame\\..*-test$"
+                          :ns-regexp        "re-frame(-lib)?\\..*-test$"
                           :output-to        "run/compiled/karma/test/test.js"
                           :compiler-options {:pretty-print                       true
                                              :closure-defines                    {re-frame.trace.trace-enabled? true}}}}}
