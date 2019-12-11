@@ -1,3 +1,70 @@
+## A local state port of re-frame 10.6
+
+I wanted to use devcards with re-frame. It could be useful for other people too.
+
+[![Clojars Project](https://img.shields.io/clojars/v/jfigueroama/re-frame.svg)](https://clojars.org/jfigueroama/re-frame)
+
+```clojureScript
+(ns reframelib-sample.core
+  (:require [reagent.core :as reagent]
+            [reagent.ratom :as ratom]
+            [devcards.core :as dc]
+            [devtools.core :as devtools]
+
+            [re-frame-lib.core
+             :refer [new-state subscribe dispatch reg-sub reg-event-db reg-event-fx]])
+  (:require-macros [devcards.core :as dc :refer [defcard deftest defcard-rg]]))
+
+(defn add-handlers
+  [state]
+  (-> state
+      (reg-sub :db (fn db-sub [db _] db))
+      (reg-event-db :init (fn init-cmd [db _] {:start 1 :end 10 :current 1 :running false}))
+      (reg-event-fx
+        :start-step
+        (fn start-step
+          [{db :db} [_ current end]]
+          (if (> current end)
+            {:db (assoc db :running false)}
+            (let [next (inc current)
+                  long-calc (reduce + (range 10000000))]
+              {:db (assoc db :current next)
+               :dispatch-later [{:ms 50 :dispatch [:start-step next end]}]}))))
+      (reg-event-fx
+        :start
+        (fn start-cmd
+          [{db :db} _]
+          {:db (-> db
+                   (assoc :running true))
+           :dispatch [:start-step (:start db) (:end db)]}))))
+
+(defonce s1 (add-handlers (new-state)))
+(dispatch s1 [:init])
+(defonce s2 (add-handlers (new-state)))
+(dispatch s2 [:init])
+
+(defn monitor-ui
+  [state owner]
+  (let [db (subscribe @state [:db])]
+    [:div
+     [:span "Running: " (str (:running @db))] [:br]
+     [:span "Start: " (:start @db)] [:br]
+     [:span "End: " (:end @db)] [:br]
+     [:span "Current: " (:current @db)] [:br] [:br]
+     [:button {:on-click #(dispatch @state [:start])} "Start"]]))
+
+(defcard-rg re-frame-lib-c1
+  monitor-ui
+  (atom s1))
+
+(defcard-rg re-frame-lib-c2
+  monitor-ui
+  (atom s2))
+
+
+(defcard "State 1" (:app-db s1))
+(defcard "State 2" (:app-db s2))
+```
 
 <img src="/images/logo/re-frame_128w.png?raw=true">
 
@@ -24,11 +91,11 @@ y'know. Pretty good.
 
 re-frame is a pattern for writing [SPAs] in ClojureScript, using [Reagent].
 
-McCoy might report "It's MVC, Jim, but not as we know it".  And you would respond 
-"McCoy, you trouble maker, why even mention an OO pattern? 
+McCoy might report "It's MVC, Jim, but not as we know it".  And you would respond
+"McCoy, you trouble maker, why even mention an OO pattern?
 re-frame is a **functional framework**."
 
-Being a functional framework, it is about two things: data, and the functions 
+Being a functional framework, it is about two things: data, and the functions
 which transform that data.  And, because it is a reactive framework, the ["data coordinates the functions"](https://www.youtube.com/watch?v=ZgqFlowyfTA&t=80) (and not the other way around).
 
 ## Why Should You Care?
@@ -47,7 +114,7 @@ Perhaps:
     interested in a ClojureScript implementation.
     In this space, re-frame is very old, hopefully in a Gandalf kind of way.
     First designed in Dec 2014, it even slightly pre-dates the official Elm Architecture,
-    although thankfully we were influenced by early-Elm concepts like `foldp` and `lift`, as well as 
+    although thankfully we were influenced by early-Elm concepts like `foldp` and `lift`, as well as
     Clojure projects like [Pedestal App], [Om] and [Hoplon]. Since then,
     re-frame has pioneered ideas like event handler middleware,
     coeffect accretion, and de-duplicated signal graphs.
@@ -69,29 +136,30 @@ You might already know that ClojureScript is a modern Lisp, and that
 Lisps are **homoiconic**.  If not, you do now.
 
 This homoiconic bit is significant. It means you program in a Lisp by creating and
-assembling Lisp data structures. Dwell on that for a moment. You are **programming in data**. 
+assembling Lisp data structures. Dwell on that for a moment. You are **programming in data**.
 The functions which later transform data, themselves start as data.
 
-Clojure programmers place particular emphasis on the primacy of data, and 
-they like to meditate on aphorisms like **data is the ultimate in late binding**. 
+Clojure programmers place particular emphasis on the primacy of data, and
+they like to meditate on aphorisms like **data is the ultimate in late binding**.
 (Less productively, they also like re-watching Rich Hickey videos, and wishing
 their hair was darker and more curly)
 
-I cannot stress enough what a big deal this is. It may seem 
-like a syntax curiosity at first but, when the penny drops for 
-you on this, it tends to be a profound moment. And once you 
-understand the importance of this concept at the language level, 
+I cannot stress enough what a big deal this is. It may seem
+like a syntax curiosity at first but, when the penny drops for
+you on this, it tends to be a profound moment. And once you
+understand the importance of this concept at the language level,
 you naturally want to leverage similar power at the library and system levels.
 
-So, it will come as no surprise, then, to know that re-frame has a 
+So, it will come as no surprise, then, to know that re-frame has a
 data oriented design. Events are data. Effects are data. DOM is data.
-The functions which transform data are registered and looked up via 
-data. Interceptors (data) are preferred over middleware (higher 
+
+The functions which transform data are registered and looked up via
+data. Interceptors (data) are preferred over middleware (higher
 order functions). Etc.
 
-And, on a related arc, re-frame applications are reactive 
-and that further elevates the importance of data because, in a reactive architecture, 
-it is the arrival of data which [coordinates the calling of functions](https://www.youtube.com/watch?v=ZgqFlowyfTA&t=80) (and not the other way around). 
+And, on a related arc, re-frame applications are reactive
+and that further elevates the importance of data because, in a reactive architecture,
+it is the arrival of data which [coordinates the calling of functions](https://www.youtube.com/watch?v=ZgqFlowyfTA&t=80) (and not the other way around).
 
 **Data - that's the way we roll.**
 
@@ -100,9 +168,9 @@ it is the arrival of data which [coordinates the calling of functions](https://w
 
 Architecturally, re-frame implements "a perpetual loop".
 
-To build an app, you hang pure functions on certain parts of this loop, 
-and re-frame looks after the **conveyance of data** 
-around the loop, into and out of the transforming functions you 
+To build an app, you hang pure functions on certain parts of this loop,
+and re-frame looks after the **conveyance of data**
+around the loop, into and out of the transforming functions you
 provide - hence a tag line of "Derived Values, Flowing".
 
 ### It does Physics
@@ -135,23 +203,23 @@ you to understand re-frame, is **practically proof** it does physics.
 Computationally, each iteration of the loop involves a
 six domino cascade.
 
-One domino triggers the next, which triggers the next, et cetera, boom, boom, boom, until we are 
-back at the beginning of the loop, and the dominoes reset to attention 
+One domino triggers the next, which triggers the next, et cetera, boom, boom, boom, until we are
+back at the beginning of the loop, and the dominoes reset to attention
 again, ready for the next iteration of the same cascade.
 
-The six dominoes are: 
+The six dominoes are:
 1. Event dispatch
-2. Event handling 
-3. Effect handling 
+2. Event handling
+3. Effect handling
 4. Query
 5. View
 6. DOM
 
-Let's have a first look at each them. 
+Let's have a first look at each them.
 
 ### 1st Domino - Event Dispatch
 
-An `event` is sent when something happens - the user 
+An `event` is sent when something happens - the user
 clicks a button, or a websocket receives a new message.
 
 Without the impulse of a triggering `event`, no six domino cascade occurs.
@@ -162,7 +230,7 @@ re-frame is `event` driven.
 
 ### 2nd Domino - Event Handling
 
-In response to an `event`, an application must decide what action to take. 
+In response to an `event`, an application must decide what action to take.
 This is known as `event handling`.
 
 Event handler functions compute how an event should change "the world",
@@ -171,7 +239,7 @@ Or, more accurately, they compute a declarative **description of the required
 `side effects`**, represented as a data structure. (So `event handlers`
 are just functions which compute data).
 
-Much of the time, an event will only cause `side effects` to the SPA's 
+Much of the time, an event will only cause `side effects` to the SPA's
 "application state", but sometimes the outside world must also be affected:
 localstore, cookies, databases, emails, logs, etc.
 
@@ -179,11 +247,11 @@ localstore, cookies, databases, emails, logs, etc.
 
 In this step, the `side effects`, returned by the previous step (as data), are actioned/performed.
 
-Now, to a functional programmer, `effects` are scary in a 
+Now, to a functional programmer, `effects` are scary in a
 [xenomorph kind of way](https://www.google.com.au/search?q=xenomorph).
 Nothing messes with functional purity
-quite like the need for side effects. On the other hand, `effects` are 
-marvelous because they move the app forward. Without them, 
+quite like the need for side effects. On the other hand, `effects` are
+marvelous because they move the app forward. Without them,
 an app stays stuck in one state forever, never achieving anything.
 
 So re-frame embraces the protagonist nature of `effects` - the entire, unruly zoo of them - but
@@ -193,15 +261,15 @@ it does so in a controlled and largely hidden way, and in a manner which is debu
 
 Domino 3 just changed the world and, very often, one particular part of it: the **application state**.
 
-re-frame's `app state` is held in one place - think of it like you 
+re-frame's `app state` is held in one place - think of it like you
 would an in-memory, central database for the app (details later).
 
-Any changes to `app state` trigger the next part of the cascade 
+Any changes to `app state` trigger the next part of the cascade
 involving dominoes 4-5-6.
 
-### There's a Formula For It 
+### There's a Formula For It
 
-The 4-5-6 domino cascade implements the formula made famous by Facebook's ground-breaking React library:  
+The 4-5-6 domino cascade implements the formula made famous by Facebook's ground-breaking React library:
   `v = f(s)`
 
 A view, `v`, is a function, `f`, of the app state, `s`.
@@ -212,16 +280,16 @@ should be displayed to the user when the application is in a given app state, `s
 Or, to capture the dynamics we'd say: **over time**, as `s` changes, `f`
 will be re-run each time to compute new `v`, forever keeping `v` up to date with the current `s`.
 
-Or, with yet another emphasis: **over time** what is presented to the user changes in response to application state changes. 
+Or, with yet another emphasis: **over time** what is presented to the user changes in response to application state changes.
 
 In our case, domino 3 changes `s`, the application state,
-and, in response, dominoes 4-5-6 are concerned with re-running `f` to compute the new `v` 
+and, in response, dominoes 4-5-6 are concerned with re-running `f` to compute the new `v`
 shown to the user.
 
 Except, of course, there are nuances.  For instance, there's no single `f` to run.
-There may be many functions which collectively build the overall DOM, 
-and only part of `s` may change at any one time, so only part of the 
-`v` (DOM) need be re-computed and updated. And some parts of `v` might not 
+There may be many functions which collectively build the overall DOM,
+and only part of `s` may change at any one time, so only part of the
+`v` (DOM) need be re-computed and updated. And some parts of `v` might not
 be showing right now.
 
 
@@ -229,52 +297,52 @@ be showing right now.
 
 <img align="right" src="/images/Readme/6dominoes.png?raw=true">
 
-Domino 4 is about extracting data from "app state", and providing it 
+Domino 4 is about extracting data from "app state", and providing it
 in the right format for view functions (which are Domino 5).
 
-Domino 4 is a novel and efficient de-duplicated signal graph which 
-runs query functions on the app state, `s`, efficiently computing 
+Domino 4 is a novel and efficient de-duplicated signal graph which
+runs query functions on the app state, `s`, efficiently computing
 reactive, multi-layered, "materialised views" of `s`.
 
-Relax about any unfamiliar terminology, you'll soon 
+Relax about any unfamiliar terminology, you'll soon
 see how simple the code actually is.
 
 (*`react-redux` programmers:* query functions serve essentially the same purpose as `mapStateToProps`)
 
 ### Domino 5 - View
 
-Domino 5 is one or more **view functions** (aka Reagent components) that compute the 
+Domino 5 is one or more **view functions** (aka Reagent components) that compute the
 UI DOM that should be displayed to the user.
 
 To render the right UI, they need to source application state, which is
-delivered reactively via the queries of Domino 4. They 
+delivered reactively via the queries of Domino 4. They
 compute hiccup-formatted data, which is a description of the DOM required.
 
 ### Domino 6 - DOM
 
-You don't write Domino 6 - it is handled for you 
-by Reagent/React. I mention it here 
+You don't write Domino 6 - it is handled for you
+by Reagent/React. I mention it here
 for completeness and to fully close the loop.
 
-This is the step in which the hiccup-formatted 
+This is the step in which the hiccup-formatted
 "descriptions of required DOM", returned by the view functions of Domino 5, are made real.
-The browser DOM nodes are mutated. 
+The browser DOM nodes are mutated.
 
 ## Managing mutation
 
 The two sub-cascades 1-2-3 and 4-5-6 have a similar structure.
 
-In each, it is the second to last domino which 
-computes "data descriptions" of mutations required, and it is 
+In each, it is the second to last domino which
+computes "data descriptions" of mutations required, and it is
 the last domino which does the dirty work and realises these descriptions.
 
-In both cases, you don't need to worry yourself about this dirty work. re-frame looks 
+In both cases, you don't need to worry yourself about this dirty work. re-frame looks
 after those dominoes.
 
 ### A Cascade Of Simple Functions
 
-**You'll (mostly) be writing pure functions** which 
-can be described, understood and 
+**You'll (mostly) be writing pure functions** which
+can be described, understood and
 tested independently. They take data, transform it and return new data.
 
 The loop itself is mechanical and predictable in operation.
@@ -285,46 +353,46 @@ which leads, in turn, to an ease in reasoning and debugging.
 
 <img align="right" src="/images/Readme/todolist.png?raw=true">
 
-So that was the view of re-frame from 60,000 feet. We'll now shift down to 30,000 feet 
+So that was the view of re-frame from 60,000 feet. We'll now shift down to 30,000 feet
 and look again at each domino, but this time with code fragments.
 
-**Imagine:** we're working on a SPA which displays a list of items. You have 
+**Imagine:** we're working on a SPA which displays a list of items. You have
 just clicked the "delete" button next to the 3rd item in the list.
 
-In response, what happens within this imaginary re-frame app? Here's a sketch 
+In response, what happens within this imaginary re-frame app? Here's a sketch
 of the six domino cascade:
 
-> Don't expect 
-to completely grok the terse code presented below. We're still at 30,000 feet. Details later. 
+> Don't expect
+to completely grok the terse code presented below. We're still at 30,000 feet. Details later.
 
 ### Code For Domino 1
 
-The delete button for that 3rd item will be rendered by a ViewFunction which looks like this: 
+The delete button for that 3rd item will be rendered by a ViewFunction which looks like this:
 ```clj
-(defn delete-button 
+(defn delete-button
   [item-id]
-  [:div.garbage-bin 
+  [:div.garbage-bin
      :on-click #(re-frame.core/dispatch [:delete-item item-id])])
 ```
 
 That `on-click` handler uses re-frame's `dispatch` to emit an `event`.
 
-A re-frame `event` is a vector and, in this case, 
-it has 2 elements: `[:delete-item 2486]` (where `2486` is the made-up id for that 3rd item).  
- 
-The first element of an event vector,
-`:delete-item`, is the kind of event. The rest is optional, useful data about the 
-`event`.  
+A re-frame `event` is a vector and, in this case,
+it has 2 elements: `[:delete-item 2486]` (where `2486` is the made-up id for that 3rd item).
 
-Events express intent in a domain specific way. 
-They are the language of your re-frame system. 
+The first element of an event vector,
+`:delete-item`, is the kind of event. The rest is optional, useful data about the
+`event`.
+
+Events express intent in a domain specific way.
+They are the language of your re-frame system.
 
 ### Code For Domino 2
 
-An `event handler` (function), called say `h`, is called to 
+An `event handler` (function), called say `h`, is called to
 compute the `effect` of the event `[:delete-item 2486]`.
 
-On app startup, `re-frame.core/reg-event-fx` would have been used to 
+On app startup, `re-frame.core/reg-event-fx` would have been used to
 register this `h` as the handler for  `:delete-item` events, like this:
 ```clj
 (re-frame.core/reg-event-fx   ;; a part of the re-frame API
@@ -332,32 +400,32 @@ register this `h` as the handler for  `:delete-item` events, like this:
   h)                          ;; the handler function for this kind of event
 ```
 
-`h` is written to take two arguments: 
+`h` is written to take two arguments:
   1. a `coeffects` map which contains the current state of the world (including app state)
   2. the `event` to handle
 
-It is the job of `h` to compute how the world should be changed by the event, and 
+It is the job of `h` to compute how the world should be changed by the event, and
 it returns a map of `effects` - a description of those changes.
 
 Here's a sketch (we are at 30,000 feet):
 ```clj
 (defn h                               ;; maybe choose a better name like `delete-item`
- [coeffects event]                    ;; `coeffects` holds the current state of the world.  
+ [coeffects event]                    ;; `coeffects` holds the current state of the world.
  (let [item-id (second event)         ;; extract id from event vector
        db      (:db coeffects)]       ;; extract the current application state
    {:db  (dissoc-in db [:items item-id])})) ;; effect is "change app state to ..."
 ```
 
 re-frame has ways (described in later tutorials) to inject necessary aspects
-of the world into that first `coeffects` argument (map). Different 
-event handlers need different "things" to get their job done. But 
-current "application state" is one aspect of the world which is 
+of the world into that first `coeffects` argument (map). Different
+event handlers need different "things" to get their job done. But
+current "application state" is one aspect of the world which is
 invariably needed, and it is available by default in the `:db` key.
 
-BTW, here is a more idiomatic rewrite of `h` which uses `destructuring` of the args: 
+BTW, here is a more idiomatic rewrite of `h` which uses `destructuring` of the args:
 
 ```clj
-(defn h 
+(defn h
   [{:keys [db]} [_ item-id]]    ;; <--- new: obtain db and id directly
   {:db  (dissoc-in db [:items item-id])}) ;; same as before
 ```
@@ -371,8 +439,8 @@ Here's what `h` returned:
 ```clj
 {:db  (dissoc-in db [:items 2486])}   ;; db is a map of some structure
 ```
-Each key of the map identifies one kind 
-of `effect`, and the value for that key supplies further details. 
+Each key of the map identifies one kind
+of `effect`, and the value for that key supplies further details.
 The map returned by `h` only has one key, so there's only one effect.
 
 A key of `:db` means to update the app state with the key's value.
@@ -380,34 +448,34 @@ A key of `:db` means to update the app state with the key's value.
 This update of "app state" is a mutative step, facilitated by re-frame
 which has a built-in `effects handler` for the `:db` effect.
 
-Why the name `:db`?  Well, re-frame sees "app state" as something of an in-memory 
+Why the name `:db`?  Well, re-frame sees "app state" as something of an in-memory
 database. More on this in a following tutorial.
 
-Just to be clear, if `h` had returned: 
+Just to be clear, if `h` had returned:
 ```clj
 {:wear  {:pants "velour flares"  :belt false}
  :tweet "Okay, yes, I am Satoshi. #coverblown"}
 ```
-Then, the two effects handlers registered for `:wear` and `:tweet` would 
-be called to action those two effects. And, no, re-frame 
-does not supply standard effect handlers for either, so you would have had 
+Then, the two effects handlers registered for `:wear` and `:tweet` would
+be called to action those two effects. And, no, re-frame
+does not supply standard effect handlers for either, so you would have had
 to have written them yourself (see how in a later tutorial).
 
 ### Code For Domino 4
 
-We now start the `v = f(s)` part of the flow. 
+We now start the `v = f(s)` part of the flow.
 
 The application state
-`s` has just changed (via Domino 3) and now boom, boom go Dominoes 4, 5, 
+`s` has just changed (via Domino 3) and now boom, boom go Dominoes 4, 5,
 and 6, at the end of which we have a new view, `v`, being shown to the user.
 
-In this domino 4, a query (function) over this app state is automatically 
-called.  This query function "extracts" data from application state, and 
+In this domino 4, a query (function) over this app state is automatically
+called.  This query function "extracts" data from application state, and
 then computes "a materialised view" of the application state - producing
 data which is useful to the view functions of domino, 5.
 
 Now, in this particular case, the query function is pretty trivial.
-Because the items are stored in app state, there's not a lot 
+Because the items are stored in app state, there's not a lot
 to compute and, instead, it acts strictly like an extractor or accessor,
 just plucking the list of items out of application state:
 ```clj
@@ -416,26 +484,26 @@ just plucking the list of items out of application state:
   (:items db))   ;; not much of a materialised view
 ```
 
-On program startup, such a `query-fn` must be associated with a `query-id`, 
-(so it can be used via `subscribe` in domino 5) using `re-frame.core/reg-sub`, 
+On program startup, such a `query-fn` must be associated with a `query-id`,
+(so it can be used via `subscribe` in domino 5) using `re-frame.core/reg-sub`,
 like this:
 ```clj
 (re-frame.core/reg-sub  ;; part of the re-frame API
-   :query-items         ;; query id  
+   :query-items         ;; query id
    query-fn)            ;; query fn
 ```
-Which says "if, in domino 5, you see a `(subscribe [:query-items])`, then 
+Which says "if, in domino 5, you see a `(subscribe [:query-items])`, then
 use `query-fn` to compute it".
 
 ### Code For Domino 5
 
-Because the query function for `:query-items` just re-computed a new value, 
-any view (function) which uses a `(subscribe [:query-items])` 
+Because the query function for `:query-items` just re-computed a new value,
+any view (function) which uses a `(subscribe [:query-items])`
 is called automatically (reactively) to re-compute new DOM.
 
-View functions compute a data structure, in hiccup format, describing 
-the DOM nodes required. In this "items" case, the view functions will *not* be generating 
-hiccup for the just-deleted item obviously but, other than this, 
+View functions compute a data structure, in hiccup format, describing
+the DOM nodes required. In this "items" case, the view functions will *not* be generating
+hiccup for the just-deleted item obviously but, other than this,
 the hiccup computed "this time" will be the same as "last time".
 
 ```clj
@@ -454,16 +522,16 @@ you might have this:<br>
   `(subscribe [:items "blue"])`
 
 The vector identifies, first, the query, and then
-supplies further arguments. You could think of that as 
+supplies further arguments. You could think of that as
 representing `select * from Items where colour="blue"`.
 
 Except there's no SQL available and you would be the one to implement
-the more sophisticated `query-fn` capable of handling the 
+the more sophisticated `query-fn` capable of handling the
 "where" argument. More in later tutorials.
 
 ### Code For Domino 6
 
-The hiccup returned by the view function 
+The hiccup returned by the view function
 is made into real browser DOM by Reagent/React. No code from you required. Just happens.
 
 The DOM computed "this
@@ -477,33 +545,33 @@ The key point to understand about our 3-4-5-6 example is:
   - a change to app state ...
   - triggers query functions to rerun ...
   - which triggers view functions to rerun
-  - which causes modified browser DOM 
+  - which causes modified browser DOM
 
 Boom, boom, boom go the dominoes. It is a reactive data flow.
 
-### Aaaaand we're done 
+### Aaaaand we're done
 
-At this point, the re-frame app returns to a quiescent state, 
+At this point, the re-frame app returns to a quiescent state,
 waiting for the next event.
 
-## So, your job is ... 
+## So, your job is ...
 
 When building a re-frame app, you:
  - design your app's information model (data and schema layer)
  - write and register event handler functions  (control and transition layer)  (domino 2)
  - (once in a blue moon) write and register effect and coeffect handler
    functions (domino 3) which do the mutative dirty work of which we dare not
-   speak. 
+   speak.
  - write and register query functions which implement nodes in a signal graph (query layer) (domino 4)
  - write Reagent view functions  (view layer)  (domino 5)
 
 
 ## re-frame is mature and proven in the large
 
-re-frame was released in early 2015, and has since 
+re-frame was released in early 2015, and has since
 [been](https://www.fullcontact.com) successfully
 [used](https://www.nubank.com.br) by
-[quite](http://open.mediaexpress.reuters.com/) a 
+[quite](http://open.mediaexpress.reuters.com/) a
 [few](https://rokt.com/) companies and
 individuals to build complex apps, many running beyond 40K lines of
 ClojureScript.
@@ -517,14 +585,14 @@ worked out well. Some have been effusive in their praise.
 
 Having said that, re-frame remains a work in progress and it falls
 short in a couple of ways - for example it doesn't work as well as we'd
-like with devcards, because it is a framework, rather than a library. 
+like with devcards, because it is a framework, rather than a library.
 We're still puzzling over some aspects and tweaking as we go. All designs
 represent a point in the possible design space, with pros and cons.
 
-And, yes, re-frame is fast, straight out of the box. And, yes, it has 
+And, yes, re-frame is fast, straight out of the box. And, yes, it has
 a good testing story (unit and behavioural). And, yes, it works with your build
 tools (like figwheel or shadow-cljs) to create
-a powerful hot-loading development story. And, yes, it has 
+a powerful hot-loading development story. And, yes, it has
 fun specialist tooling, and a community,
 and useful 3rd party libraries.
 
@@ -546,8 +614,8 @@ https://github.com/day8/re-frame/blob/master/docs/External-Resources.md
 ### T-Shirt Unlocked
 
 Good news.  If you've read this far,
-your insiders T-shirt will be arriving soon - it will feature turtles, 
-[xkcd](http://xkcd.com/1416/) and something about "data all the way down". 
+your insiders T-shirt will be arriving soon - it will feature turtles,
+[xkcd](http://xkcd.com/1416/) and something about "data all the way down".
 But we're still working on the hilarious caption bit. Open a
 repo issue with a suggestion.
 
