@@ -4,18 +4,64 @@
    [re-frame.interop   :refer [add-on-dispose! debug-enabled? make-reaction ratom? deref? dispose! reagent-id]]
    [re-frame.loggers   :refer [console]]
    [re-frame.utils     :refer [first-in-vector]]
-   [re-frame.registrar :refer [get-handler clear-handlers register-handler]]
+   [re-frame.registry  :as reg]
    [re-frame.trace     :as trace :include-macros true]))
 
 (def kind :sub)
-(assert (re-frame.registrar/kinds kind))
+(assert (re-frame.registry/kinds kind))
 
 ;; -- cache -------------------------------------------------------------------
 ;;
 ;; De-duplicate subscriptions. If two or more equal subscriptions
 ;; are concurrently active, we want only one handler running.
 ;; Two subscriptions are "equal" if their query vectors test "=".
-(def query->reaction (atom {}))
+
+(defprotocol ICache
+  ;; Using -prefixed methods here because for some reason when removing the dash I get
+  ;;
+  ;; java.lang.ClassFormatError: Duplicate method name&signature in class file re_frame/subs/SubscriptionCache
+  ;;
+  ;; as far as I understand that would happen when you try to implement two identically
+  ;; named functions in one defrecord call but I don't see how I'm doing that here
+  (-clear [this])
+  (-cache-and-return [this query-v dyn-v r])
+  (-cache-lookup
+    [this query-v]
+    [this query-v dyn-v]))
+
+(defrecord SubscriptionCache [state]
+  #?(:cljs IDeref :clj clojure.lang.IDeref)
+  #?(:cljs (-deref [this] (-> this :state deref))
+     :clj (deref [this] (-> this :state deref)))
+  ICache
+  (-clear [this]
+    (doseq [[k rxn] @state]
+      (dispose! rxn))
+    (if (not-empty @state)
+      (console :warn "Subscription cache should be empty after clearing it.")))
+  (-cache-and-return [this query-v dyn-v r]
+    (let [cache-key [query-v dyn-v]]
+      ;; when this reaction is no longer being used, remove it from the cache
+      (add-on-dispose! r #(do (swap! state dissoc cache-key)
+                              (trace/with-trace {:operation (first-in-vector query-v)
+                                                 :op-type   :sub/dispose
+                                                 :tags      {:query-v  query-v
+                                                             :reaction (reagent-id r)}}
+                                nil)))
+      ;; cache this reaction, so it can be used to deduplicate other, later "=" subscriptions
+      (swap! state assoc cache-key r)
+      (trace/merge-trace! {:tags {:reaction (reagent-id r)}})
+      r))
+  (-cache-lookup [this query-v]
+    (-cache-lookup this query-v []))
+  (-cache-lookup [this query-v dyn-v]
+    (get @state [query-v dyn-v])))
+
+(defn clear-all-handlers!
+  "Unregisters all existing subscription handlers and clears the subscription cache"
+  [{:keys [registry subs-cache]}]
+  (reg/clear-handlers registry kind)
+  (-clear subs-cache))
 
 (defn clear-subscription-cache!
   "Causes all subscriptions to be removed from the cache.
@@ -27,49 +73,13 @@
   after a React exception, because React components won't have been
   cleaned up properly. And this, in turn, means the subscriptions within those
   components won't have been cleaned up correctly. So this forces the issue."
-  []
-  (doseq [[k rxn] @query->reaction]
+  [subs-cache]
+  (doseq [[k rxn] @subs-cache]
     (dispose! rxn))
-  (if (not-empty @query->reaction)
+  (if (not-empty @subs-cache)
     (console :warn "Subscription cache should be empty after clearing it.")))
 
-(defn clear-all-handlers!
-  "Unregisters all existing subscription handlers"
-  []
-  (clear-handlers kind)
-  (clear-subscription-cache!))
-
-(defn cache-and-return
-  "cache the reaction r"
-  [query-v dynv r]
-  (let [cache-key [query-v dynv]]
-    ;; when this reaction is no longer being used, remove it from the cache
-    (add-on-dispose! r #(trace/with-trace {:operation (first-in-vector query-v)
-                                           :op-type   :sub/dispose
-                                           :tags      {:query-v  query-v
-                                                       :reaction (reagent-id r)}}
-                                          (swap! query->reaction
-                                                 (fn [query-cache]
-                                                   (if (and (contains? query-cache cache-key) (identical? r (get query-cache cache-key)))
-                                                     (dissoc query-cache cache-key)
-                                                     query-cache)))))
-    ;; cache this reaction, so it can be used to deduplicate other, later "=" subscriptions
-    (swap! query->reaction (fn [query-cache]
-                             (when debug-enabled?
-                               (when (contains? query-cache cache-key)
-                                 (console :warn "re-frame: Adding a new subscription to the cache while there is an existing subscription in the cache" cache-key)))
-                             (assoc query-cache cache-key r)))
-    (trace/merge-trace! {:tags {:reaction (reagent-id r)}})
-    r)) ;; return the actual reaction
-
-(defn cache-lookup
-  ([query-v]
-   (cache-lookup query-v []))
-  ([query-v dyn-v]
-   (get @query->reaction [query-v dyn-v])))
-
-
-;; -- subscribe ---------------------------------------------------------------
+;; -- subscribe -----------------------------------------------------
 
 (defn subscribe
   "Given a `query`, returns a Reagent `reaction` which, over
@@ -113,37 +123,36 @@
 
   XXX
   "
-
-  ([query]
+  ([{:keys [registry app-db subs-cache]} query]
    (trace/with-trace {:operation (first-in-vector query)
                       :op-type   :sub/create
                       :tags      {:query-v query}}
-     (if-let [cached (cache-lookup query)]
+     (if-let [cached (-cache-lookup subs-cache query)]
        (do
          (trace/merge-trace! {:tags {:cached?  true
                                      :reaction (reagent-id cached)}})
          cached)
 
        (let [query-id   (first-in-vector query)
-             handler-fn (get-handler kind query-id)]
+             handler-fn (reg/get-handler registry kind query-id)]
          (trace/merge-trace! {:tags {:cached? false}})
          (if (nil? handler-fn)
            (do (trace/merge-trace! {:error true})
                (console :error (str "re-frame: no subscription handler registered for: " query-id ". Returning a nil subscription.")))
-           (cache-and-return query [] (handler-fn app-db query)))))))
+           (-cache-and-return subs-cache query [] (handler-fn app-db query)))))))
 
-  ([query dynv]
+  ([{:keys [registry app-db subs-cache]} query dynv]
    (trace/with-trace {:operation (first-in-vector query)
                       :op-type   :sub/create
                       :tags      {:query-v query
                                   :dyn-v   dynv}}
-     (if-let [cached (cache-lookup query dynv)]
+     (if-let [cached (-cache-lookup subs-cache query dynv)]
        (do
          (trace/merge-trace! {:tags {:cached?  true
                                      :reaction (reagent-id cached)}})
          cached)
        (let [query-id   (first-in-vector query)
-             handler-fn (get-handler kind query-id)]
+             handler-fn (reg/get-handler registry kind query-id)]
          (trace/merge-trace! {:tags {:cached? false}})
          (when debug-enabled?
            (when-let [not-reactive (not-empty (remove ratom? dynv))]
@@ -155,8 +164,8 @@
                  sub      (make-reaction (fn [] (handler-fn app-db query @dyn-vals)))]
              ;; handler-fn returns a reaction which is then wrapped in the sub reaction
              ;; need to double deref it to get to the actual value.
-             ;(console :log "Subscription created: " v dynv)
-             (cache-and-return query dynv (make-reaction (fn [] @@sub))))))))))
+             ;; (console :log "Subscription created: " v dynv)
+             (-cache-and-return subs-cache query dynv (make-reaction (fn [] @@sub))))))))))
 
 ;; -- reg-sub -----------------------------------------------------------------
 
@@ -199,34 +208,34 @@
 
 (defn reg-sub
   "For a given `query-id`, register two functions: a `computation` function and an `input signals` function.
-  
+
   During program execution, a call to `subscribe`, such as `(subscribe [:sub-id 3 \"blue\"])`,
   will create a new `:sub-id` node in the Signal Graph. And, at that time, re-frame
-  needs to know how to create the node.   By calling `reg-sub`, you are registering 
-  'the template' or 'the mechanism' by which nodes in the Signal Graph can be created. 
+  needs to know how to create the node.   By calling `reg-sub`, you are registering
+  'the template' or 'the mechanism' by which nodes in the Signal Graph can be created.
 
   Repeating: calling `reg-sub` does not create a node. It only creates the template
-  from which nodes can be created later. 
-  
-  `reg-sub` arguments are:  
-    - a `query-id` (typically a namespaced keyword)
-    - a function which returns the inputs required by this kind of node (can be supplied  in one of three ways) 
-    - a function which computes the value of this kind of node 
+  from which nodes can be created later.
 
-  The `computation function` is always the last argument supplied and it is expected to have the signature: 
+  `reg-sub` arguments are:
+    - a `query-id` (typically a namespaced keyword)
+    - a function which returns the inputs required by this kind of node (can be supplied  in one of three ways)
+    - a function which computes the value of this kind of node
+
+  The `computation function` is always the last argument supplied and it is expected to have the signature:
     `(input-values, query-vector) -> a-value`
-  
-  When `computation function` is called, the `query-vector` argument will be the vector supplied to the 
-  the `subscribe` which caused the node to be created. So, if the call was `(subscribe [:sub-id 3 \"blue\"])`, 
+
+  When `computation function` is called, the `query-vector` argument will be the vector supplied to the
+  the `subscribe` which caused the node to be created. So, if the call was `(subscribe [:sub-id 3 \"blue\"])`,
   then the `query-vector` supplied to the computaton function will be `[:sub-id 3 \"blue\"]`.
 
-  The arguments supplied between the `query-id` and the `computation-function` can vary in 3 ways, 
-  but whatever is there defines the `input signals` part of the template, controlling what input 
- values \"flow into\" the `computation function` gets when it is called. 
+  The arguments supplied between the `query-id` and the `computation-function` can vary in 3 ways,
+  but whatever is there defines the `input signals` part of the template, controlling what input
+ values \"flow into\" the `computation function` gets when it is called.
 
   `reg-sub` can be called in one of three ways, because there are three ways to define the input signals part.
-  But note, the 2nd method, in which a `signal-fn` is explicitly supplied, is the most canonical and instructive. The other 
-  two are really just sugary variations. 
+  But note, the 2nd method, in which a `signal-fn` is explicitly supplied, is the most canonical and instructive. The other
+  two are really just sugary variations.
 
   1. No input signals given:
       ```clj
@@ -237,8 +246,8 @@
 
      In the absence of an explicit `input-fn`, the node's input signal defaults to `app-db`
      and, as a result, the value within `app-db` (a map) is
-     is given as the 1st argument when `a-computation-fn` is called.   
- 
+     is given as the 1st argument when `a-computation-fn` is called.
+
 
   2. A signal function is explicitly supplied:
      ```clj
@@ -247,15 +256,15 @@
        signal-fn     ;; <-- here
        computation-fn)
      ```
-     
+
      This is the most canonical and instructive of the three variations.
-     
+
      When a node is created from the template, the `signal-fn` will be called and it
      is expected to return the input signal(s) as either a singleton, if there is only
      one, or a sequence if there are many, or a map with the signals as the values.
 
-     The values from returned nominated signals will be supplied as the 1st argument to  
-     the `a-computation-fn` when it is called - and subject to what this `signal-fn` returns, 
+     The values from returned nominated signals will be supplied as the 1st argument to
+     the `a-computation-fn` when it is called - and subject to what this `signal-fn` returns,
      this value will be either a singleton, sequence or map of them (paralleling
      the structure returned by the `signal-fn`).
 
@@ -283,7 +292,7 @@
         (fn [a query-vec]       ;; 1st argument is a single value
           ...)
         ```
- 
+
      Further Note: variation #1 above, in which an `input-fn` was not supplied, like this:
        ```clj
      (reg-sub
@@ -295,10 +304,10 @@
      ```clj
      (reg-sub
        :query-id
-       (fn [_ _]  re-frame/app-db)   ;; <--- explicit input-fn 
+       (fn [_ _]  re-frame/app-db)   ;; <--- explicit input-fn
        a-computation-fn)             ;; has signature:  (fn [db query-vec]  ... ret-value)
      ```
- 
+
   3. Syntax Sugar
 
      ```clj
@@ -313,7 +322,7 @@
      This 3rd variation is just syntactic sugar for the 2nd.  Instead of providing an
      `signals-fn` you provide one or more pairs of `:<-` and a subscription vector.
 
-     If you supply only one pair a singleton will be supplied to the computation function, 
+     If you supply only one pair a singleton will be supplied to the computation function,
      as if you had supplied a `signal-fn` returning only a single value:
 
      ```clj
@@ -327,7 +336,7 @@
   For further understanding, read `/docs`, and look at the detailed comments in
   /examples/todomvc/src/subs.cljs
   "
-  [query-id & args]
+  [{:keys [registry app-db] :as frame} query-id & args]
   (let [computation-fn (last args)
         input-args     (butlast args) ;; may be empty, or one signal fn, or pairs of  :<- / vector
         err-header     (str "re-frame: reg-sub for " query-id ", ")
@@ -348,8 +357,8 @@
                              (when-not (= :<- marker)
                                (console :error err-header "expected :<-, got:" marker))
                              (fn inp-fn
-                               ([_] (subscribe vec))
-                               ([_ _] (subscribe vec))))
+                               ([_] (subscribe frame (second input-args)))
+                               ([_ _] (subscribe frame (second input-args)))))
 
                          ;; multiple sugar pairs
                          (let [pairs   (partition 2 input-args)
@@ -358,9 +367,10 @@
                            (when-not (and (every? #{:<-} markers) (every? vector? vecs))
                              (console :error err-header "expected pairs of :<- and vectors, got:" pairs))
                            (fn inp-fn
-                             ([_] (map subscribe vecs))
-                             ([_ _] (map subscribe vecs)))))]
-    (register-handler
+                             ([_] (map (partial subscribe frame) vecs))
+                             ([_ _] (map (partial subscribe frame) vecs)))))]
+    (reg/register-handler
+      registry
       kind
       query-id
       (fn subs-handler-fn
